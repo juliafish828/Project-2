@@ -3,6 +3,10 @@ library(jsonlite)
 library(tibble)
 library(dplyr)
 
+city_options_nc <- c("Durham", "Raleigh")
+city_options_va <- c("Fredericksburg", "Richmond", "Virginia Beach")
+
+
 get_breweries <- function(state = NULL, city = NULL, type = NULL, per_page = 50, page = 1) {
   
   base_url <- "https://api.openbrewerydb.org/v1/breweries"
@@ -13,20 +17,11 @@ get_breweries <- function(state = NULL, city = NULL, type = NULL, per_page = 50,
   brewery_type <- NULL
   
   if (!is.null(state)) {
-    if (state == "North Carolina") {
-      by_state <- "north_carolina"
-      if (!is.null(city)) {
-        if (city == "Durham") by_city <- "durham"
-        else if (city == "Raleigh") by_city <- "raleigh"
-      }
-    } else if (state == "Virginia") {
-      by_state <- "virginia"
-      if (!is.null(city)) {
-        if (city == "Virginia Beach") by_city <- "virginia_beach"
-        else if (city == "Richmond") by_city <- "richmond"
-        else if (city == "Fredericksburg") by_city <- "fredericksburg"
-      }
-    }
+    by_state <- tolower(gsub(" ", "_", state))
+  }
+  
+  if (!is.null(city)){
+    by_city <- tolower(gsub(" ", "_", city))
   }
   
   query <- list(
