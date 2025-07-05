@@ -18,34 +18,48 @@ get_breweries <- function(state = NULL, city = NULL, type = NULL, per_page = 50,
   by_city <- NULL
   brewery_type <- NULL
   
-  # takes the string, makes spaces underscores and all the letters lowercase (to use in the API)
-  if (!is.null(state)) {
-    by_state <- tolower(gsub(" ", "_", state))
+  # if state is NULL or "Both/No Selection", default to NC and VA
+  if (is.null(state) || state == "Both/No Selection") {
+    state <- c("North Carolina", "Virginia")
   }
   
-  # same for cities
-  if (!is.null(city)){
-    by_city <- tolower(gsub(" ", "_", city))
+  # turn state names into API usable strings
+  state <- tolower(gsub(" ", "_", state))
+  
+  
+  # function that supports ONE state at a time (results to be combined later with multiple using map_df)
+  one_state_at_a_time <- function(single_state) {
+    query <- list(
+      by_state = single_state,
+      per_page = per_page,
+      page = page
+    )
+    
+    # if city is not empty (one state selected), the selected cities is put in the query list
+    if (!is.null(city)) {
+      query$by_city <- tolower(gsub(" ", "_", city))
+    }
+    
+    # if type is not empty, the same thing happens
+    if (!is.null(type)) {
+      query$brewery_type <- type
+    }
+    
+    # use GET() and parse it and make it a tibble
+    response <- GET(url = base_url, query = query)
+    parsed <- fromJSON(rawToChar(response$content))
+    data <- as_tibble(parsed)
+    
+    # west virginia has been sliding through to the app, so filter that out explicitly here
+    data <- filter(data, state %in% c("Virginia", "North Carolina"))
+    
+    return(data)
   }
   
-  # make the query list outside of GET()
-  query <- list(
-    by_state = by_state,
-    by_city = by_city,
-    by_type = type,
-    per_page = per_page,
-    page = page
-  )
+  # loop over all states (queried individually) and bind the results
+  results <- map_df(state, one_state_at_a_time)
   
-  # remove NULLS (so they are not in the API and will not cause issues)
-  query <- query[!sapply(query, is.null)]
-  
-  # GET(), parse, and return this tibble
-  response <- GET(url = base_url, query = query)
-  parsed <- fromJSON(rawToChar(response$content))
-  
-  
-  return(as_tibble(parsed))
+  return(results)
 }
 
 # to help with plotting on the app
