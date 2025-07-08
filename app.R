@@ -1,5 +1,6 @@
 library(bslib)
 library(tidyverse)
+library(rlang)
 source("helpers.R")
 
 ui <- fluidPage(
@@ -72,6 +73,35 @@ ui <- fluidPage(
         downloadButton("download_data", "Download CSV")
         
       ), # close conditional panel
+      
+      conditionalPanel(
+        condition = "input.main_tabs == 'Data Exploration'",
+        
+        # Always visible
+        selectInput("plot_type", "Choose a plot type:",
+                    choices = c("None", "Bar Plot", "Scatter Plot", "Boxplot")),
+        
+        # Show other inputs only if plot_type is chosen
+        conditionalPanel(
+          condition = "input.plot_type != 'None'",
+          selectInput("x_var", "X-axis variable:", choices = NULL),
+          
+          # Y variable input not used if barplot is chosen, so not displated in this case
+          conditionalPanel(
+            condition = "input.plot_type != 'Bar Plot'",
+            selectInput("y_var", "Y-axis variable:", choices = NULL)
+          ),
+          
+          selectInput("color_var", "Color by (optional):", choices = c(None = "None")),
+          selectInput("summary_var1", "First Variable (Rows of Contingency Table):", choices = NULL),
+          selectInput("summary_var2", "Second Variable (Columns of Contingency Table):", choices = NULL),
+          
+          helpText("Note: I did the project one part at a time, so I did not realize that not having a single
+                   numeric variable would pose a problem until it was too late. I made a contingency table
+                   instead of a summary option, since count is really the only choice. Hope that is okay.")
+
+        )
+      ) # close conditional panel
     ), # close sidebar panel
     
     mainPanel(
@@ -121,33 +151,20 @@ ui <- fluidPage(
         tabPanel(
           "Data Exploration",
           
-          tabPanel(
-            "Data Exploration",
-            
-            tags$br(),
-            
-            fluidRow(
-              column(4,
-                     selectInput("plot_type", "Choose a plot type:",
-                                 choices = c("Bar Plot", "Scatter Plot", "Boxplot")),
-                     selectInput("x_var", "X-axis variable:", choices = NULL),
-                     selectInput("y_var", "Y-axis variable:", choices = NULL),
-                     selectInput("facet_var", "Facet by (optional):", choices = c(None = "None"))
-              ),
-              column(8,
-                     plotOutput("brew_plot"),
-                     tags$hr(),
-                     h4("Summary Table:"),
-                     tableOutput("summary_table")
-              )
+          tags$br(),
+          
+          plotOutput("brew_plot"),
+              
+          tags$hr(),
+          
+          h4("Contingency Table:"),
+          tableOutput("contingency")
             )
           )
         )
-      )
-    )# close main panel
-  ), # close sidebar layout
+      ) # close main panel
+    ) # close sidebar layout
 
-)
 
 server <- function(input, output, session) {
   
@@ -287,11 +304,6 @@ server <- function(input, output, session) {
     head(data_input()[, input$selected_columns, drop = FALSE], input$n_rows)
   })
   
-  # the plot is made (very simple for now)
-  output$brew_plot <- renderPlot({
-    plot_breweries(data_input())
-  })
-  
   # the columns checkbox for the data table
   output$column_ui <- renderUI({
     req(data_input())
@@ -334,50 +346,70 @@ server <- function(input, output, session) {
     
     updateSelectInput(session, "x_var", choices = names(data))
     updateSelectInput(session, "y_var", choices = names(data))
-    updateSelectInput(session, "facet_var", choices = c(None = "None", names(data())))
+    updateSelectInput(session, "color_var", choices = c(None = "None", names(data())))
+    updateSelectInput(session, "sum_var", choices = c("Count", "Five Number Summary"))
+    
   })
   
+  # plot for tab 3
   output$brew_plot <- renderPlot({
     req(input$plot_type, input$x_var)
     data <- data_input()
     
-    p <- ggplot(data, aes_string(x = input$x_var))
+    # aes mapping
+    aes_mapping <- aes_string(x = input$x_var)
     
+    if (input$plot_type != "Bar Plot") {
+      req(input$y_var)
+      aes_mapping <- aes_string(x = input$x_var, y = input$y_var)
+    }
+    
+    # if "color by" is selected, add a color
+    if (input$color_var != "None") {
+      aes_mapping$colour <- sym(input$color_var)
+    }
+    
+    # base plot
+    g <- ggplot(data, mapping = aes_mapping)
+    
+    # Add geom based on plot type
     if (input$plot_type == "Bar Plot") {
-      p <- p + geom_bar()
+      g <- g + geom_bar()
     } else if (input$plot_type == "Scatter Plot") {
-      req(input$y_var)
-      p <- ggplot(data, aes_string(x = input$x_var, y = input$y_var)) +
-        geom_point()
+      g <- g + geom_point()
     } else if (input$plot_type == "Boxplot") {
-      req(input$y_var)
-      p <- ggplot(data, aes_string(x = input$x_var, y = input$y_var)) +
-        geom_boxplot()
+      g <- g + geom_boxplot()
     }
     
-    if (input$facet_var != "None") {
-      p <- p + facet_wrap(as.formula(paste("~", input$facet_var)))
-    }
-    
-    p + theme_minimal()
+    g + theme_minimal()
   })
   
   
-  output$summary_table <- renderTable({
+  
+  observe({
     data <- data_input()
-    req(input$x_var)
+    var_names <- names(data)
     
-    if (is.numeric(data[[input$x_var]])) {
-      summary_df <- data %>%
-        group_by(.data[[input$x_var]]) %>%
-        summarise(Count = n())
-    } else {
-      summary_df <- table(data[[input$x_var]]) %>%
-        as.data.frame()
-      names(summary_df) <- c(input$x_var, "Count")
-    }
+    updateSelectInput(session, "x_var", choices = var_names)
+    updateSelectInput(session, "y_var", choices = var_names)
+    updateSelectInput(session, "color_var", choices = c(None = "None", var_names))
+    updateSelectInput(session, "summary_var1", choices = var_names)
+    updateSelectInput(session, "summary_var2", choices = var_names)
+  })
+  
+  
+  output$contingency <- renderTable({
+    data <- data_input()
+    req(input$summary_var1, input$summary_var2)
     
-    summary_df
+    # contingency table
+    table_out <- data %>%
+      count(.data[[input$summary_var1]], .data[[input$summary_var2]]) %>%
+      pivot_wider(names_from = input$summary_var2, 
+                  values_from = n, 
+                  values_fill = 0)
+    
+    table_out
   })
   
   
